@@ -10,6 +10,35 @@
     gtag('js', new Date());
     gtag('config', 'G-YYGX93RB58');
     gtag('config', 'AW-18264716793');
+
+    // Google Ads conversion: a visitor clicks any phone link on the website.
+    function gtag_report_conversion(url) {
+      let navigated = false;
+
+      const continueToPhone = function () {
+        if (navigated) return;
+        navigated = true;
+
+        if (typeof url !== 'undefined') {
+          window.location = url;
+        }
+      };
+
+      if (typeof gtag === 'function') {
+        gtag('event', 'conversion', {
+          send_to: 'AW-18264716793/I1TACIy1--EcEPnrpYVE',
+          value: 1.0,
+          currency: 'CAD',
+          event_callback: continueToPhone
+        });
+
+        window.setTimeout(continueToPhone, 800);
+      } else {
+        continueToPhone();
+      }
+
+      return false;
+    }
   </script>
 
   <meta charset="UTF-8">
@@ -1278,6 +1307,13 @@
     const form = document.getElementById('car-wash-form');
     const successMsg = document.getElementById('form-success');
     const submitButton = form.querySelector('button[type="submit"]');
+
+    document.querySelectorAll('a[href^="tel:"]').forEach((phoneLink) => {
+      phoneLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        gtag_report_conversion(phoneLink.href);
+      });
+    });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
