@@ -1,3 +1,5 @@
+---
+---
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -976,7 +978,7 @@
       <div class="mint-gallery-pro__status">
         <span id="gallery-current">01</span>
         <span class="mint-gallery-pro__divider"></span>
-        <span id="gallery-total">10</span>
+        <span id="gallery-total">00</span>
       </div>
     </div>
 
@@ -995,13 +997,13 @@
     <div id="lightbox" class="mint-lightbox" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Full screen detailing photo">
       <div class="mint-lightbox__top">
         <div class="mint-lightbox__brand">Mint Car Detail</div>
-        <div class="mint-lightbox__count"><span id="lightbox-current">01</span> / <span id="lightbox-total">10</span></div>
+        <div class="mint-lightbox__count"><span id="lightbox-current">01</span> / <span id="lightbox-total">00</span></div>
         <button type="button" id="close" class="mint-lightbox__close" aria-label="Close full screen photo">&times;</button>
       </div>
 
       <button type="button" id="prev" class="mint-lightbox__arrow mint-lightbox__arrow--prev" aria-label="Previous photo">&#10094;</button>
       <figure class="mint-lightbox__figure">
-        <img id="lightbox-img" src="./assets/images/slideshow/1.jpeg" alt="Enlarged mobile car detailing gallery photo">
+        <img id="lightbox-img" alt="Enlarged mobile car detailing gallery photo">
         <figcaption id="lightbox-caption">Recent Mint Car Detail work</figcaption>
       </figure>
       <button type="button" id="next" class="mint-lightbox__arrow mint-lightbox__arrow--next" aria-label="Next photo">&#10095;</button>
@@ -1037,7 +1039,7 @@
         <p>Starting from</p>
 
         <h3 class="tw-text-5xl tw-font-semibold tw-text-blue-950">
-          $99
+          $120
         </h3>
 
         <ul class="tw-mt-2 tw-flex tw-flex-col tw-gap-2 tw-text-lg">
@@ -1083,7 +1085,7 @@
         <p>Starting from</p>
 
         <h3 class="tw-text-5xl tw-font-semibold tw-text-blue-950">
-          $149
+          $199
         </h3>
 
         <ul class="tw-mt-2 tw-flex tw-flex-col tw-gap-2 tw-text-lg">
@@ -1387,6 +1389,26 @@
     if (reviews.length > 1) {
       setInterval(showNextReview, 4000);
     }
+  </script>
+
+  <!--
+    GitHub Pages/Jekyll builds this JSON list from every supported image in
+    assets/images/slideshow, including images with non-numbered filenames.
+    Uploading a new image to that folder is enough to add it to the gallery.
+  -->
+  <script id="gallery-image-data" type="application/json">
+  [
+    {% assign gallery_extensions = ".jpg,.jpeg,.png,.webp,.avif,.gif" | split: "," %}
+    {% assign gallery_first_image = true %}
+    {% for gallery_file in site.static_files %}
+      {% assign gallery_extension = gallery_file.extname | downcase %}
+      {% if gallery_file.path contains "/assets/images/slideshow/" and gallery_extensions contains gallery_extension %}
+        {% unless gallery_first_image %},{% endunless %}
+        {{ gallery_file.path | relative_url | jsonify }}
+        {% assign gallery_first_image = false %}
+      {% endif %}
+    {% endfor %}
+  ]
   </script>
 
   <script src="./scripts/utils.js"></script>

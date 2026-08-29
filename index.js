@@ -36,21 +36,19 @@ const CITY_DATA = {
 
 /*
   GALLERY:
-  Add as many entries as you want here. The HTML never needs to change.
-  You can use .jpeg, .jpg, .png or .webp and any filename.
+  GitHub Pages builds the complete image list into #gallery-image-data in
+  index.html. Add or remove a supported image in assets/images/slideshow and
+  the gallery updates on the next deployment. Filenames do not need numbers.
+
+  The numbered-file fallback keeps the gallery usable during a direct local
+  preview where GitHub Pages has not processed the HTML template yet.
 */
-const GALLERY_IMAGES = [
-  "./assets/images/slideshow/1.jpeg",
-  "./assets/images/slideshow/2.jpeg",
-  "./assets/images/slideshow/3.jpeg",
-  "./assets/images/slideshow/4.jpeg",
-  "./assets/images/slideshow/5.jpeg",
-  "./assets/images/slideshow/6.jpeg",
-  "./assets/images/slideshow/7.jpeg",
-  "./assets/images/slideshow/8.jpeg",
-  "./assets/images/slideshow/9.jpeg",
-  "./assets/images/slideshow/10.jpeg"
-];
+const GALLERY_FALLBACK = {
+  folder: "./assets/images/slideshow/",
+  extensions: ["jpeg", "jpg", "png", "webp", "avif", "gif"],
+  maximumNumber: 500,
+  stopAfterMissing: 20
+};
 
 function currentCity() {
   const slug = location.pathname.toLowerCase().split("/").filter(Boolean)[0] || "";
@@ -92,16 +90,93 @@ function applyCity() {
   if (cityField) cityField.value = city.name;
 }
 
-function buildGallery() {
+function naturalImageSort(first, second) {
+  return first.localeCompare(second, undefined, {
+    numeric: true,
+    sensitivity: "base"
+  });
+}
+
+function galleryImagesFromPage() {
+  const dataElement = document.getElementById("gallery-image-data");
+  if (!dataElement) return [];
+
+  try {
+    const images = JSON.parse(dataElement.textContent);
+    if (!Array.isArray(images)) return [];
+
+    return images
+      .filter((src) => typeof src === "string" && src.trim())
+      .map((src) => src.trim());
+  } catch (error) {
+    // Expected when index.html is opened directly without a GitHub Pages build.
+    return [];
+  }
+}
+
+function imageExists(src) {
+  return new Promise((resolve) => {
+    const probe = new Image();
+    probe.onload = () => resolve(true);
+    probe.onerror = () => resolve(false);
+    probe.src = src;
+  });
+}
+
+async function findNumberedImage(number) {
+  for (const extension of GALLERY_FALLBACK.extensions) {
+    const src = `${GALLERY_FALLBACK.folder}${number}.${extension}`;
+    if (await imageExists(src)) return src;
+  }
+
+  return null;
+}
+
+async function discoverNumberedImages() {
+  const images = [];
+  let consecutiveMissing = 0;
+
+  for (let number = 1; number <= GALLERY_FALLBACK.maximumNumber; number += 1) {
+    const src = await findNumberedImage(number);
+
+    if (src) {
+      images.push(src);
+      consecutiveMissing = 0;
+    } else {
+      consecutiveMissing += 1;
+    }
+
+    if (consecutiveMissing >= GALLERY_FALLBACK.stopAfterMissing) break;
+  }
+
+  return images;
+}
+
+async function getGalleryImages() {
+  const generatedImages = galleryImagesFromPage();
+  const images = generatedImages.length
+    ? generatedImages
+    : await discoverNumberedImages();
+
+  return [...new Set(images)].sort(naturalImageSort);
+}
+
+function formatGalleryNumber(value, total) {
+  const width = Math.max(2, String(Math.max(total, 1)).length);
+  return String(value).padStart(width, "0");
+}
+
+async function buildGallery() {
   const track = document.getElementById("gallery-track");
   if (!track) return;
 
-  track.innerHTML = "";
+  const galleryImages = await getGalleryImages();
+  const fragment = document.createDocumentFragment();
 
-  GALLERY_IMAGES.forEach((src, index) => {
+  galleryImages.forEach((src, index) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "mint-gallery-slide";
+    button.className = "mint-gallery-pro__slide mint-gallery-slide";
     button.dataset.galleryIndex = String(index);
     button.setAttribute("aria-label", `Open detailing photo ${index + 1}`);
 
@@ -111,13 +186,17 @@ function buildGallery() {
     img.loading = index < 2 ? "eager" : "lazy";
     img.decoding = "async";
 
-    // If one file is missing, only that slide is removed; the gallery keeps working.
-    img.addEventListener("error", () => button.remove(), { once: true });
+    // A broken image removes only its own slide and refreshes the live count.
+    img.addEventListener("error", () => {
+      button.remove();
+      track.dispatchEvent(new CustomEvent("gallerychange"));
+    }, { once: true });
 
     button.appendChild(img);
-    track.appendChild(button);
+    fragment.appendChild(button);
   });
 
+  track.replaceChildren(fragment);
   setupGallery(track);
 }
 
@@ -129,83 +208,253 @@ function setupGallery(track) {
   const nextBtn = document.getElementById("next");
   const scrollPrev = document.getElementById("gallery-scroll-prev");
   const scrollNext = document.getElementById("gallery-scroll-next");
+  const galleryCurrent = document.getElementById("gallery-current");
+  const galleryTotal = document.getElementById("gallery-total");
+  const lightboxCurrent = document.getElementById("lightbox-current");
+  const lightboxTotal = document.getElementById("lightbox-total");
 
   let currentIndex = 0;
   let autoTimer = null;
+  let restartTimer = null;
+  let scrollFrame = null;
+  let previouslyFocused = null;
 
-  const availableSlides = () => Array.from(track.querySelectorAll(".mint-gallery-slide"));
+  const availableSlides = () =>
+    Array.from(track.querySelectorAll(".mint-gallery-slide"));
+
+  function visibleSlideIndex() {
+    const slides = availableSlides();
+    if (!slides.length) return 0;
+
+    const viewportCenter = track.scrollLeft + (track.clientWidth / 2);
+    let closestIndex = 0;
+    let closestDistance = Infinity;
+
+    slides.forEach((slide, index) => {
+      const slideCenter = slide.offsetLeft + (slide.offsetWidth / 2);
+      const distance = Math.abs(slideCenter - viewportCenter);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    });
+
+    return closestIndex;
+  }
+
+  function updateCounters() {
+    const total = availableSlides().length;
+    const visibleIndex = total ? visibleSlideIndex() : 0;
+    const visibleNumber = total ? visibleIndex + 1 : 0;
+
+    if (galleryCurrent) {
+      galleryCurrent.textContent =
+        formatGalleryNumber(visibleNumber, total);
+    }
+
+    if (galleryTotal) {
+      galleryTotal.textContent =
+        formatGalleryNumber(total, total);
+    }
+
+    if (lightboxTotal) {
+      lightboxTotal.textContent =
+        formatGalleryNumber(total, total);
+    }
+
+    if (!total) {
+      clearInterval(autoTimer);
+      closeLightbox();
+    } else if (currentIndex >= total) {
+      currentIndex = total - 1;
+    }
+  }
+
+  function updateLightboxCounter() {
+    const total = availableSlides().length;
+
+    if (lightboxCurrent) {
+      lightboxCurrent.textContent =
+        formatGalleryNumber(total ? currentIndex + 1 : 0, total);
+    }
+
+    if (lightboxTotal) {
+      lightboxTotal.textContent =
+        formatGalleryNumber(total, total);
+    }
+  }
 
   function openAt(index) {
     const slides = availableSlides();
+
     if (!slides.length || !lightbox || !lightboxImg) return;
+
     currentIndex = (index + slides.length) % slides.length;
+
     const img = slides[currentIndex].querySelector("img");
     if (!img) return;
-    lightboxImg.src = img.src;
+
+    previouslyFocused = document.activeElement;
+
+    lightboxImg.src = img.currentSrc || img.src;
     lightboxImg.alt = img.alt;
+
+    updateLightboxCounter();
+
     lightbox.classList.add("active");
+    lightbox.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
+
+    closeBtn?.focus();
   }
 
   function closeLightbox() {
     if (!lightbox) return;
+
+    const wasOpen = lightbox.classList.contains("active");
+
     lightbox.classList.remove("active");
+    lightbox.setAttribute("aria-hidden", "true");
     document.body.style.overflow = "";
+
+    if (wasOpen && previouslyFocused instanceof HTMLElement) {
+      previouslyFocused.focus();
+    }
   }
 
   function moveLightbox(direction) {
     openAt(currentIndex + direction);
   }
 
+  function scrollToSlide(index) {
+    const slides = availableSlides();
+    if (!slides.length) return;
+
+    const wrappedIndex = (index + slides.length) % slides.length;
+
+    track.scrollTo({
+      left: slides[wrappedIndex].offsetLeft,
+      behavior: "smooth"
+    });
+  }
+
+  function scrollByPhoto(direction) {
+    scrollToSlide(visibleSlideIndex() + direction);
+  }
+
+  function startAutoScroll() {
+    clearInterval(autoTimer);
+
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+
+    if (document.hidden || availableSlides().length < 2) {
+      return;
+    }
+
+    autoTimer = setInterval(() => {
+      const slides = availableSlides();
+      if (slides.length < 2) return;
+
+      const nextIndex = visibleSlideIndex() + 1;
+
+      scrollToSlide(nextIndex >= slides.length ? 0 : nextIndex);
+    }, 4500);
+  }
+
+  function pauseAndRestartAutoScroll() {
+    clearInterval(autoTimer);
+    clearTimeout(restartTimer);
+
+    restartTimer = window.setTimeout(startAutoScroll, 7000);
+  }
+
   track.addEventListener("click", (event) => {
     const slide = event.target.closest(".mint-gallery-slide");
     if (!slide) return;
+
     const slides = availableSlides();
     openAt(slides.indexOf(slide));
   });
 
-  closeBtn?.addEventListener("click", (e) => { e.stopPropagation(); closeLightbox(); });
-  prevBtn?.addEventListener("click", (e) => { e.stopPropagation(); moveLightbox(-1); });
-  nextBtn?.addEventListener("click", (e) => { e.stopPropagation(); moveLightbox(1); });
-  lightbox?.addEventListener("click", (e) => { if (e.target === lightbox) closeLightbox(); });
+  track.addEventListener("scroll", () => {
+    if (scrollFrame) {
+      cancelAnimationFrame(scrollFrame);
+    }
 
-  document.addEventListener("keydown", (e) => {
-    if (!lightbox?.classList.contains("active")) return;
-    if (e.key === "Escape") closeLightbox();
-    if (e.key === "ArrowLeft") moveLightbox(-1);
-    if (e.key === "ArrowRight") moveLightbox(1);
+    scrollFrame = requestAnimationFrame(updateCounters);
+  }, { passive: true });
+
+  track.addEventListener("gallerychange", () => {
+    updateCounters();
+    updateLightboxCounter();
+    startAutoScroll();
   });
 
-  const scrollAmount = () => Math.min(track.clientWidth * 0.82, 920);
-  const scrollByPhoto = (direction) => {
-    track.scrollBy({ left: direction * scrollAmount(), behavior: "smooth" });
-  };
+  closeBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeLightbox();
+  });
 
-  scrollPrev?.addEventListener("click", () => scrollByPhoto(-1));
-  scrollNext?.addEventListener("click", () => scrollByPhoto(1));
+  prevBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    moveLightbox(-1);
+  });
 
-  function startAutoScroll() {
-    clearInterval(autoTimer);
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  nextBtn?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    moveLightbox(1);
+  });
 
-    autoTimer = setInterval(() => {
-      const atEnd = track.scrollLeft + track.clientWidth >= track.scrollWidth - 24;
-      if (atEnd) track.scrollTo({ left: 0, behavior: "smooth" });
-      else scrollByPhoto(1);
-    }, 4500);
-  }
+  lightbox?.addEventListener("click", (event) => {
+    if (event.target === lightbox) {
+      closeLightbox();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (!lightbox?.classList.contains("active")) return;
+
+    if (event.key === "Escape") closeLightbox();
+    if (event.key === "ArrowLeft") moveLightbox(-1);
+    if (event.key === "ArrowRight") moveLightbox(1);
+  });
+
+  scrollPrev?.addEventListener("click", () => {
+    scrollByPhoto(-1);
+    pauseAndRestartAutoScroll();
+  });
+
+  scrollNext?.addEventListener("click", () => {
+    scrollByPhoto(1);
+    pauseAndRestartAutoScroll();
+  });
 
   ["pointerdown", "touchstart", "wheel"].forEach((type) => {
-    track.addEventListener(type, () => {
-      clearInterval(autoTimer);
-      window.setTimeout(startAutoScroll, 7000);
-    }, { passive: true });
+    track.addEventListener(type, pauseAndRestartAutoScroll, {
+      passive: true
+    });
   });
 
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      clearInterval(autoTimer);
+    } else {
+      startAutoScroll();
+    }
+  });
+
+  updateCounters();
+  updateLightboxCounter();
   startAutoScroll();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   applyCity();
-  buildGallery();
+
+  buildGallery().catch((error) => {
+    console.error("Gallery could not be loaded:", error);
+  });
 });
